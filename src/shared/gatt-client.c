@@ -1226,7 +1226,7 @@ static bool discovery_parse_services(struct discovery_op *op, bool primary,
 	return true;
 }
 
-static void discover_secondary_cb(bool success, uint8_t att_ecode,
+static void discover_primary_cb(bool success, uint8_t att_ecode,
 						struct bt_gatt_result *result,
 						void *user_data)
 {
@@ -1238,14 +1238,14 @@ static void discover_secondary_cb(bool success, uint8_t att_ecode,
 	discovery_req_clear(client);
 
 	if (!success) {
+		/* Reset error in case of not found */
 		switch (att_ecode) {
 		case BT_ATT_ERROR_ATTRIBUTE_NOT_FOUND:
-		case BT_ATT_ERROR_UNSUPPORTED_GROUP_TYPE:
 			success = true;
 			att_ecode = 0;
 			goto next;
 		default:
-			DBG(client, "Secondary service discovery failed."
+			DBG(client, "Primary service discovery failed."
 					" ATT ECODE: 0x%02x", att_ecode);
 			goto done;
 		}
@@ -1256,14 +1256,13 @@ static void discover_secondary_cb(bool success, uint8_t att_ecode,
 		goto done;
 	}
 
-	DBG(client, "Secondary services found: %u",
+	DBG(client, "Primary services found: %u",
 					bt_gatt_result_service_count(result));
 
-	if (!discovery_parse_services(op, false, &iter)) {
+	if (!discovery_parse_services(op, true, &iter)) {
 		success = false;
 		goto done;
 	}
-
 
 next:
 	if (queue_isempty(op->pending_svcs) || queue_isempty(op->discov_ranges))
@@ -1288,71 +1287,6 @@ next:
 		return;
 
 	DBG(client, "Failed to start included services discovery");
-
-	discovery_op_unref(op);
-	success = false;
-
-done:
-	discovery_op_complete(op, success, att_ecode);
-}
-
-static void discover_primary_cb(bool success, uint8_t att_ecode,
-						struct bt_gatt_result *result,
-						void *user_data)
-{
-	struct discovery_op *op = user_data;
-	struct bt_gatt_client *client = op->client;
-	struct bt_gatt_iter iter;
-
-	discovery_req_clear(client);
-
-	if (!success) {
-		/* Reset error in case of not found */
-		switch (att_ecode) {
-		case BT_ATT_ERROR_ATTRIBUTE_NOT_FOUND:
-			success = true;
-			att_ecode = 0;
-			goto secondary;
-		default:
-			DBG(client, "Primary service discovery failed."
-					" ATT ECODE: 0x%02x", att_ecode);
-			goto done;
-		}
-	}
-
-	if (!result || !bt_gatt_iter_init(&iter, result)) {
-		success = false;
-		goto done;
-	}
-
-	DBG(client, "Primary services found: %u",
-					bt_gatt_result_service_count(result));
-
-	if (!discovery_parse_services(op, true, &iter)) {
-		success = false;
-		goto done;
-	}
-
-secondary:
-	/*
-	 * Version 4.2 [Vol 1, Part A] page 101:
-	 * A secondary service is a service that provides auxiliary
-	 * functionality of a device and is referenced from at least one
-	 * primary service on the device.
-	 */
-	if (queue_isempty(op->pending_svcs))
-		goto done;
-
-	/* Discover secondary services */
-	client->discovery_req = bt_gatt_discover_secondary_services(client->att,
-						NULL, op->start, op->end,
-						discover_secondary_cb,
-						discovery_op_ref(op),
-						discovery_op_unref);
-	if (client->discovery_req)
-		return;
-
-	DBG(client, "Failed to start secondary service discovery");
 
 	discovery_op_unref(op);
 	success = false;
